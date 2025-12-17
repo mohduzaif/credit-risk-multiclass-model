@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 from scipy.stats import chi2_contingency
@@ -26,6 +27,8 @@ from sklearn.preprocessing import LabelEncoder
 
 from sklearn.tree import DecisionTreeClassifier, plot_tree
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
 
 
 
@@ -52,7 +55,8 @@ columns_to_be_removed = []
 for column in cibil_df.columns:
     if (cibil_df[column] == -99999).sum() > 10000:
         columns_to_be_removed.append(column)
-        
+ 
+# print(len(columns_to_be_removed))
 cibil_df = cibil_df.drop(columns_to_be_removed, axis = 1)
 
 
@@ -104,14 +108,22 @@ for column in final_merged_df.columns:
     if final_merged_df[column].dtype != 'object' and column not in ['PROSPECTID', 'Approved_Flag']:
         numerical_columns.append(column)
         
-        
+# print all the numerical columns.
+print(numerical_columns) 
         
 # calculate the value of VIF(Sequential VIF) to deal with the Multicolinarity between the numerical columns.
 # VIF Sequentially checks.
+# Best Method for Multicolinarity.
+
 numeric_df = final_merged_df[numerical_columns]
 total_numeric_columns = numeric_df.shape[1]
 columns_to_be_kept = []
 column_index = 0
+
+
+# HERE WE PLOT A CORR MATRIX FOR VISUALIZATION.
+# correlation matrix
+corr_matrix = numeric_df.corr()
 
 
 for i in range(0, total_numeric_columns):
@@ -125,7 +137,7 @@ for i in range(0, total_numeric_columns):
     else:
         numeric_df = numeric_df.drop(numerical_columns[i], axis = 1)
         
-        
+
 # check for the Association for each numerical Column(using ANOVA becs here we have more than 2 columns).
 
 
@@ -144,7 +156,7 @@ for column in columns_to_be_kept:
         final_numerical_columns_to_be_kept.append(column) 
         
         
-# Feature Selection is done now for categorical and Numerical columns.
+# FEATURE SELECTION IS DONE FOR BOTH CATEGORICAL AND NUMERICAL COLUMNS.
         
 
 # Now we list all the features.
@@ -298,7 +310,110 @@ plt.show()
 
 
 
-# NOW WE FINETUNE THE XGBoost for further Study.
+# NOW WE FINETUNE THE XGBoost for further Study because it give me the best results.
+
+
+# Standardization.
+
+columns_to_be_scaled = ['Age_Oldest_TL','Age_Newest_TL','time_since_recent_payment',
+                        'max_recent_level_of_deliq','recent_level_of_deliq',
+                        'time_since_recent_enq','NETMONTHLYINCOME','Time_With_Curr_Empr']
+
+# Do it using columnTransformer.
+
+# create a ColumnTransformer.
+preprocessing = ColumnTransformer(
+    transformers = [
+        ('num_scale', StandardScaler(), columns_to_be_scaled)
+        ], 
+    remainder = 'passthrough'   # keep the other columns remain unchange.
+)
+
+
+# apply the StandardScaler on the x_train and y_train dataset.
+x_train_scaled = preprocessing.fit_transform(x_train)
+x_test_scaled = preprocessing.fit_transform(x_test)
+
+
+# Now fit the XGBoost model again on standardized data.
+
+# Encode labels to integers(fit on train only quki yaha humare pass multi-class prediction hai).
+le = LabelEncoder()
+y_train_enc = le.fit_transform(y_train)   # ['P1','P2','P3','P4'] -> [0,1,2,3]
+y_test_enc = le.fit_transform(y_test)
+
+# model training.
+n_classes = len(le.classes_)  # it should be 4.
+xgb_model = XGBClassifier(objective = 'multi:softprob', num_class = n_classes)
+xgb_model.fit(x_train_scaled, y_train_enc)
+
+
+# prediction on testing data.
+y_pred = xgb_model.predict(x_test_scaled)
+
+# Evaluation.
+accuracy = accuracy_score(y_test_enc, y_pred)
+classification_Report = classification_report(y_test_enc, y_pred)
+
+# print accuracy and classification report. 
+print('Accuracy of XGBoost : ', accuracy)
+print('Classification Report : ', classification_Report)
+
+# NO IMPROVMENT OF STANDARDIZATION IN MATRICES (ACCURACY, RECALL, F1-SCORE).
+
+
+
+# Now we come for doing HYPERPARAMETER TUNING in XGBoost Algorithm.
+
+# Hyperparameter tuning in xgboost
+from sklearn.model_selection import GridSearchCV
+
+# Define the XGBClassifier with the initial set of hyperparameters
+xgb_model = XGBClassifier(objective='multi:softmax', num_class=4)
+
+
+# Define the parameter grid for hyperparameter tuning
+param_grid = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [3, 5, 7],
+    'learning_rate': [0.01, 0.1, 0.2],
+}
+
+grid_search = GridSearchCV(estimator=xgb_model, param_grid=param_grid, cv=3, scoring='accuracy', n_jobs=-1)
+grid_search.fit(x_train_scaled, y_train_enc)
+
+# Print the best hyperparameters
+print("Best Hyperparameters:", grid_search.best_params_)
+
+# Best Hyperparameters: {'learning_rate': 0.2, 'max_depth': 3, 'n_estimators': 200}
+
+# Evaluate the model with the best hyperparameters on the test set
+best_model = grid_search.best_estimator_
+accuracy = best_model.score(x_test_scaled, y_test_enc)
+print("Test Accuracy:", accuracy)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
